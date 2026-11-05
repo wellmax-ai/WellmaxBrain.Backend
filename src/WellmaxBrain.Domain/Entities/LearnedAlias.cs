@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace WellmaxBrain.Domain.Entities;
 
 public class LearnedAlias
@@ -10,7 +12,11 @@ public class LearnedAlias
     public string MatchedName { get; set; } = string.Empty;
     public decimal DefaultPrice { get; set; }
     public int UsageCount { get; set; } = 1;
-    public string? ConfirmedBy { get; set; }
+    
     public Guid? ConfirmedByUserId { get; set; }
+
+    [NotMapped]
+    public string? ConfirmedBy { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

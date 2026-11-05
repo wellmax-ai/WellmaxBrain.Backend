@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace WellmaxBrain.Domain.Entities;
 
 public class User
@@ -9,6 +11,8 @@ public class User
     public string PasswordHash { get; set; } = string.Empty;
     
     public string? BirthDate { get; set; }
+
+    [NotMapped]
     public string? DateOfBirth 
     { 
         get => BirthDate; 
