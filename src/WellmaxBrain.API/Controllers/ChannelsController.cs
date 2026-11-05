@@ -20,41 +20,108 @@ public class ChannelsController : ControllerBase
         _hub = hub;
     }
 
+    // CHỈ TRẢ VỀ CÁC KÊNH MÀ USERID ĐÓ ĐƯỢC PHÉP THAM GIA (Hoặc là Super Admin)
     [HttpGet]
-    public async Task<IActionResult> GetAllChannels()
+    public async Task<IActionResult> GetAllChannels([FromQuery] string? userId = null)
     {
-        var channels = await _db.Channels
+        Guid userGuid = Guid.Empty;
+        bool hasUserFilter = !string.IsNullOrWhiteSpace(userId) && Guid.TryParse(userId, out userGuid);
+
+        bool isSuperAdmin = false;
+        if (hasUserFilter)
+        {
+            var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userGuid);
+            isSuperAdmin = user?.IsAdmin == true;
+        }
+
+        // Lấy danh sách nhóm
+        var query = _db.Channels
             .AsNoTracking()
             .Include(c => c.Members)
+            .AsQueryable();
+
+        // Nếu không phải Super Admin, CHỈ lấy những nhóm mà user có trong danh sách thành viên hoặc là chủ/phó nhóm
+        if (hasUserFilter && !isSuperAdmin)
+        {
+            query = query.Where(c => c.OwnerId == userGuid || 
+                                     c.DeputyIds.Contains(userGuid) || 
+                                     c.Members.Any(m => m.UserId == userGuid));
+        }
+
+        var channelsList = await query
             .OrderByDescending(c => c.IsPinned)
             .ThenByDescending(c => c.PinnedAtUnix)
             .ThenByDescending(c => c.CreatedAt)
-            .Select(c => new
+            .ToListAsync();
+
+        var result = new List<object>();
+
+        // Với mỗi nhóm, lấy chính xác nội dung tin nhắn cuối cùng từ bảng ChatMessages trong PostgreSQL
+        foreach (var c in channelsList)
+        {
+            var lastMsg = await _db.ChatMessages
+                .AsNoTracking()
+                .Where(m => m.ChannelId == c.Id && !m.IsDeleted)
+                .OrderByDescending(m => m.CreatedAtUnix)
+                .FirstOrDefaultAsync();
+
+            string lastMessageText = "Chưa có tin nhắn mới";
+            string lastTimeText = "";
+
+            if (lastMsg != null)
             {
-                id = c.Id.ToString(),
+                if (!string.IsNullOrWhiteSpace(lastMsg.Text))
+                {
+                    lastMessageText = lastMsg.Text;
+                }
+                else if (!string.IsNullOrEmpty(lastMsg.ImageUrl))
+                {
+                    lastMessageText = "[Hình ảnh]";
+                }
+                else if (!string.IsNullOrEmpty(lastMsg.FileUrl))
+                {
+                    lastMessageText = $"[Tệp tin: {lastMsg.FileName ?? "Tài liệu"}]";
+                }
+                else if (!string.IsNullOrEmpty(lastMsg.ReminderJson))
+                {
+                    lastMessageText = "[Nhắc hẹn công việc]";
+                }
+
+                lastTimeText = DateTimeOffset.FromUnixTimeMilliseconds(lastMsg.CreatedAtUnix).ToLocalTime().ToString("HH:mm");
+            }
+
+            var allMembers = c.Members.Select(m => m.UserId.ToString().ToLowerInvariant()).ToList();
+            if (!allMembers.Contains(c.OwnerId.ToString().ToLowerInvariant()))
+            {
+                allMembers.Add(c.OwnerId.ToString().ToLowerInvariant());
+            }
+
+            result.Add(new
+            {
+                id = c.Id.ToString().ToLowerInvariant(),
                 name = c.Name,
                 avatar = c.Avatar ?? "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=120&q=80",
-                description = c.Description ?? "Kênh bán hàng Wellmax",
-                ownerId = c.OwnerId.ToString(),
-                deputyIds = c.DeputyIds.Select(d => d.ToString()).ToList(),
+                description = c.Description ?? "Nhóm bán hàng Wellmax",
+                ownerId = c.OwnerId.ToString().ToLowerInvariant(),
+                deputyIds = c.DeputyIds.Select(d => d.ToString().ToLowerInvariant()).ToList(),
                 isPinned = c.IsPinned,
                 pinnedAt = c.PinnedAtUnix,
                 isHidden = c.IsHidden,
                 isGroup = true,
-                members = c.Members.Select(m => m.UserId.ToString()).ToList(),
-                lastMessage = "Chưa có tin nhắn mới",
-                lastTime = c.CreatedAt.ToString("HH:mm")
-            })
-            .ToListAsync();
+                members = allMembers,
+                lastMessage = lastMessageText,
+                lastTime = lastTimeText
+            });
+        }
 
-        return Ok(channels);
+        return Ok(result);
     }
 
     [HttpPost]
     public async Task<IActionResult> CreateChannel([FromBody] CreateChannelDto dto)
     {
         if (string.IsNullOrWhiteSpace(dto.Name))
-            return BadRequest(new { message = "Tên kênh không được để trống." });
+            return BadRequest(new { message = "Tên nhóm không được để trống." });
 
         Guid ownerGuid;
         if (!Guid.TryParse(dto.OwnerId, out ownerGuid))
@@ -67,7 +134,7 @@ public class ChannelsController : ControllerBase
             Id = Guid.NewGuid(),
             TenantId = "wellmax-default",
             Name = dto.Name.Trim(),
-            Description = dto.Description?.Trim() ?? "Kênh bán hàng mới",
+            Description = dto.Description?.Trim() ?? "Nhóm bán hàng mới",
             Avatar = string.IsNullOrWhiteSpace(dto.Avatar) 
                 ? "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=120&q=80" 
                 : dto.Avatar.Trim(),
@@ -79,25 +146,18 @@ public class ChannelsController : ControllerBase
             CreatedAt = DateTime.UtcNow
         };
 
-        // Tự động thêm Trưởng nhóm và Bot vào danh sách thành viên kênh
         newChannel.Members.Add(new ChannelMember
         {
-            Id = Guid.NewGuid(),
-            TenantId = "wellmax-default",
             ChannelId = newChannel.Id,
             UserId = ownerGuid,
-            Role = ChannelRole.Owner,
             JoinedAt = DateTime.UtcNow
         });
 
         var botGuid = Guid.Parse("99999999-9999-9999-9999-999999999999");
         newChannel.Members.Add(new ChannelMember
         {
-            Id = Guid.NewGuid(),
-            TenantId = "wellmax-default",
             ChannelId = newChannel.Id,
             UserId = botGuid,
-            Role = ChannelRole.Member,
             JoinedAt = DateTime.UtcNow
         });
 
@@ -106,60 +166,58 @@ public class ChannelsController : ControllerBase
 
         var resPayload = new
         {
-            id = newChannel.Id.ToString(),
+            id = newChannel.Id.ToString().ToLowerInvariant(),
             name = newChannel.Name,
             avatar = newChannel.Avatar,
             description = newChannel.Description,
-            ownerId = newChannel.OwnerId.ToString(),
+            ownerId = newChannel.OwnerId.ToString().ToLowerInvariant(),
             deputyIds = new List<string>(),
             isPinned = newChannel.IsPinned,
             pinnedAt = newChannel.PinnedAtUnix,
             isHidden = newChannel.IsHidden,
             isGroup = true,
-            members = newChannel.Members.Select(m => m.UserId.ToString()).ToList(),
-            lastMessage = "Kênh mới đã được tạo",
-            lastTime = DateTime.UtcNow.ToString("HH:mm")
+            members = newChannel.Members.Select(m => m.UserId.ToString().ToLowerInvariant()).ToList(),
+            lastMessage = "Chưa có tin nhắn mới",
+            lastTime = ""
         };
 
         return Ok(resPayload);
     }
 
-    // THÊM THÀNH VIÊN VÀO KÊNH (Trưởng nhóm hoặc Thành viên được phân quyền)
     [HttpPost("{id}/members")]
     public async Task<IActionResult> AddMember(Guid id, [FromBody] AddMemberRequest req)
     {
         var channel = await _db.Channels.Include(c => c.Members).FirstOrDefaultAsync(c => c.Id == id);
-        if (channel == null) return NotFound(new { message = "Không tìm thấy kênh bán hàng." });
+        if (channel == null) return NotFound(new { message = "Không tìm thấy nhóm bán hàng." });
 
         if (!Guid.TryParse(req.UserId, out var memberGuid))
         {
             return BadRequest(new { message = "Mã người dùng không hợp lệ." });
         }
 
-        // Kiểm tra xem đã có trong kênh chưa
         if (channel.Members.Any(m => m.UserId == memberGuid))
         {
-            return BadRequest(new { message = "Nhân sự này đã có mặt trong kênh." });
+            return BadRequest(new { message = "Nhân sự này đã có mặt trong nhóm." });
         }
 
         channel.Members.Add(new ChannelMember
         {
-            Id = Guid.NewGuid(),
-            TenantId = channel.TenantId,
             ChannelId = channel.Id,
             UserId = memberGuid,
-            Role = ChannelRole.Member,
             JoinedAt = DateTime.UtcNow
         });
 
         await _db.SaveChangesAsync();
 
-        var updatedMemberIds = channel.Members.Select(m => m.UserId.ToString()).ToList();
+        var updatedMemberIds = channel.Members.Select(m => m.UserId.ToString().ToLowerInvariant()).ToList();
+        if (!updatedMemberIds.Contains(channel.OwnerId.ToString().ToLowerInvariant()))
+        {
+            updatedMemberIds.Add(channel.OwnerId.ToString().ToLowerInvariant());
+        }
 
-        // Broadcast realtime qua SignalR để mọi người cập nhật danh sách thành viên kênh
         await _hub.Clients.Group(channel.Id.ToString().ToLowerInvariant()).SendAsync("ChannelMembersUpdated", new
         {
-            channelId = channel.Id.ToString(),
+            channelId = channel.Id.ToString().ToLowerInvariant(),
             members = updatedMemberIds,
             action = "added",
             userId = req.UserId
@@ -167,23 +225,21 @@ public class ChannelsController : ControllerBase
 
         return Ok(new
         {
-            message = "Đã thêm thành viên vào kênh thành công!",
-            channelId = channel.Id.ToString(),
+            message = "Đã thêm thành viên vào nhóm thành công!",
+            channelId = channel.Id.ToString().ToLowerInvariant(),
             members = updatedMemberIds
         });
     }
 
-    // XÓA THÀNH VIÊN KHỎI KÊNH (Chỉ Trưởng nhóm có quyền)
     [HttpDelete("{id}/members/{userId}")]
     public async Task<IActionResult> RemoveMember(Guid id, string userId, [FromQuery] string requesterId)
     {
         var channel = await _db.Channels.Include(c => c.Members).FirstOrDefaultAsync(c => c.Id == id);
-        if (channel == null) return NotFound(new { message = "Không tìm thấy kênh bán hàng." });
+        if (channel == null) return NotFound(new { message = "Không tìm thấy nhóm bán hàng." });
 
-        // Kiểm tra quyền: Người gọi API phải là Trưởng nhóm (Owner)
         if (!Guid.TryParse(requesterId, out var reqGuid) || channel.OwnerId != reqGuid)
         {
-            return StatusCode(403, new { message = "Chỉ có Trưởng nhóm mới có quyền xóa thành viên khỏi kênh." });
+            return StatusCode(403, new { message = "Chỉ có Trưởng nhóm mới có quyền xóa thành viên khỏi nhóm." });
         }
 
         if (!Guid.TryParse(userId, out var targetMemberGuid))
@@ -193,7 +249,7 @@ public class ChannelsController : ControllerBase
 
         if (targetMemberGuid == channel.OwnerId)
         {
-            return BadRequest(new { message = "Trưởng nhóm không thể tự xóa chính mình khỏi kênh." });
+            return BadRequest(new { message = "Trưởng nhóm không thể tự xóa chính mình khỏi nhóm." });
         }
 
         var memberRecord = channel.Members.FirstOrDefault(m => m.UserId == targetMemberGuid);
@@ -204,12 +260,15 @@ public class ChannelsController : ControllerBase
             await _db.SaveChangesAsync();
         }
 
-        var updatedMemberIds = channel.Members.Select(m => m.UserId.ToString()).ToList();
+        var updatedMemberIds = channel.Members.Select(m => m.UserId.ToString().ToLowerInvariant()).ToList();
+        if (!updatedMemberIds.Contains(channel.OwnerId.ToString().ToLowerInvariant()))
+        {
+            updatedMemberIds.Add(channel.OwnerId.ToString().ToLowerInvariant());
+        }
 
-        // Broadcast realtime qua SignalR tới tất cả người dùng trong phòng
         await _hub.Clients.Group(channel.Id.ToString().ToLowerInvariant()).SendAsync("ChannelMembersUpdated", new
         {
-            channelId = channel.Id.ToString(),
+            channelId = channel.Id.ToString().ToLowerInvariant(),
             members = updatedMemberIds,
             action = "removed",
             userId = userId
@@ -217,8 +276,8 @@ public class ChannelsController : ControllerBase
 
         return Ok(new
         {
-            message = "Đã xóa thành viên khỏi kênh thành công!",
-            channelId = channel.Id.ToString(),
+            message = "Đã xóa thành viên khỏi nhóm thành công!",
+            channelId = channel.Id.ToString().ToLowerInvariant(),
             members = updatedMemberIds
         });
     }
