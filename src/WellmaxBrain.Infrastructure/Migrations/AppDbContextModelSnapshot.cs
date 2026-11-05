@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
-using WellmaxBrain.Infrastructure.Data;
+using WellmaxBrain.Infrastructure.Persistence;
 
 #nullable disable
 
@@ -17,28 +17,169 @@ namespace WellmaxBrain.Infrastructure.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "8.0.8")
+                .HasAnnotation("ProductVersion", "8.0.2")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("WellmaxBrain.Domain.Entities.LearnedAlias", b =>
+            modelBuilder.Entity("WellmaxBrain.Domain.Entities.Channel", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("ConfirmedBy")
-                        .IsRequired()
+                    b.Property<string>("Avatar")
                         .HasColumnType("text");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTime>("LastUsedAt")
+                    b.Property<string>("DeputyIds")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsHidden")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsPinned")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("PinnedAtUnix")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PinnedMessageIds")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Channels");
+                });
+
+            modelBuilder.Entity("WellmaxBrain.Domain.Entities.ChannelMember", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ChannelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("JoinedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RoleInChannel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChannelId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("ChannelMembers");
+                });
+
+            modelBuilder.Entity("WellmaxBrain.Domain.Entities.ChatMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ChannelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("CreatedAtUnix")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("FileName")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FileSize")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FileUrl")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ImageUrl")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsBot")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Reactions")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReminderJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SenderAvatar")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("SenderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SenderName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChannelId");
+
+                    b.HasIndex("SenderId");
+
+                    b.ToTable("ChatMessages");
+                });
+
+            modelBuilder.Entity("WellmaxBrain.Domain.Entities.LearnedAlias", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConfirmedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("DefaultPrice")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("MatchedName")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("MatchedSku")
                         .IsRequired()
@@ -56,6 +197,9 @@ namespace WellmaxBrain.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("UsageCount")
                         .HasColumnType("integer");
 
@@ -69,25 +213,21 @@ namespace WellmaxBrain.Infrastructure.Migrations
 
             modelBuilder.Entity("WellmaxBrain.Domain.Entities.Order", b =>
                 {
-                    b.Property<string>("Id")
-                        .HasColumnType("text");
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
 
-                    b.Property<string>("ChannelId")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<DateTime?>("AutoSyncDeadline")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ChannelId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("CreatedByUserId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.Property<string>("CustomerName")
                         .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Note")
                         .HasColumnType("text");
 
                     b.Property<string>("OrderCode")
@@ -98,16 +238,18 @@ namespace WellmaxBrain.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("RawMessage")
-                        .HasColumnType("text");
-
                     b.Property<string>("ShippingAddress")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<decimal>("ShippingFee")
+                        .HasColumnType("numeric");
+
+                    b.Property<Guid>("SourceMessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
 
                     b.Property<string>("TenantId")
                         .IsRequired()
@@ -118,7 +260,9 @@ namespace WellmaxBrain.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OrderCode")
+                    b.HasIndex("ChannelId");
+
+                    b.HasIndex("TenantId", "OrderCode")
                         .IsUnique();
 
                     b.ToTable("Orders");
@@ -126,18 +270,15 @@ namespace WellmaxBrain.Infrastructure.Migrations
 
             modelBuilder.Entity("WellmaxBrain.Domain.Entities.OrderItem", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                    b.Property<bool>("IsGift")
+                        .HasColumnType("boolean");
 
-                    b.Property<string>("Note")
-                        .HasColumnType("text");
-
-                    b.Property<string>("OrderId")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("ProductName")
                         .IsRequired()
@@ -162,11 +303,9 @@ namespace WellmaxBrain.Infrastructure.Migrations
 
             modelBuilder.Entity("WellmaxBrain.Domain.Entities.Product", b =>
                 {
-                    b.Property<string>("Sku")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -175,29 +314,48 @@ namespace WellmaxBrain.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<int>("StockQty")
                         .HasColumnType("integer");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Unit")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<decimal>("UnitPrice")
                         .HasColumnType("numeric");
 
-                    b.HasKey("Sku");
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Sku")
+                        .IsUnique();
 
                     b.ToTable("Products");
                 });
 
             modelBuilder.Entity("WellmaxBrain.Domain.Entities.User", b =>
                 {
-                    b.Property<string>("Id")
-                        .HasColumnType("text");
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Avatar")
                         .HasColumnType("text");
 
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
+                    b.Property<string>("Bio")
+                        .HasColumnType("text");
 
-                    b.Property<DateTime?>("DateOfBirth")
+                    b.Property<string>("BirthDate")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Department")
@@ -209,7 +367,6 @@ namespace WellmaxBrain.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.Property<string>("Gender")
-                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<bool>("IsActive")
@@ -233,26 +390,97 @@ namespace WellmaxBrain.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("PhoneNumber")
+                    b.HasIndex("TenantId", "PhoneNumber")
                         .IsUnique();
 
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("WellmaxBrain.Domain.Entities.ChannelMember", b =>
+                {
+                    b.HasOne("WellmaxBrain.Domain.Entities.Channel", "Channel")
+                        .WithMany("Members")
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("WellmaxBrain.Domain.Entities.User", "User")
+                        .WithMany("ChannelMemberships")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Channel");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("WellmaxBrain.Domain.Entities.ChatMessage", b =>
+                {
+                    b.HasOne("WellmaxBrain.Domain.Entities.Channel", "Channel")
+                        .WithMany("Messages")
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("WellmaxBrain.Domain.Entities.User", "Sender")
+                        .WithMany("Messages")
+                        .HasForeignKey("SenderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Channel");
+
+                    b.Navigation("Sender");
+                });
+
+            modelBuilder.Entity("WellmaxBrain.Domain.Entities.Order", b =>
+                {
+                    b.HasOne("WellmaxBrain.Domain.Entities.Channel", "Channel")
+                        .WithMany("Orders")
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Channel");
+                });
+
             modelBuilder.Entity("WellmaxBrain.Domain.Entities.OrderItem", b =>
                 {
-                    b.HasOne("WellmaxBrain.Domain.Entities.Order", null)
+                    b.HasOne("WellmaxBrain.Domain.Entities.Order", "Order")
                         .WithMany("Items")
                         .HasForeignKey("OrderId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Order");
+                });
+
+            modelBuilder.Entity("WellmaxBrain.Domain.Entities.Channel", b =>
+                {
+                    b.Navigation("Members");
+
+                    b.Navigation("Messages");
+
+                    b.Navigation("Orders");
                 });
 
             modelBuilder.Entity("WellmaxBrain.Domain.Entities.Order", b =>
                 {
                     b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("WellmaxBrain.Domain.Entities.User", b =>
+                {
+                    b.Navigation("ChannelMemberships");
+
+                    b.Navigation("Messages");
                 });
 #pragma warning restore 612, 618
         }

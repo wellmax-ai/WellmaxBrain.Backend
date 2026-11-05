@@ -10,6 +10,7 @@ public class LearnedAlias
     public string MatchedName { get; set; } = string.Empty;
     public decimal DefaultPrice { get; set; }
     public int UsageCount { get; set; } = 1;
-    public Guid ConfirmedByUserId { get; set; }
+    public string? ConfirmedBy { get; set; }
+    public Guid? ConfirmedByUserId { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

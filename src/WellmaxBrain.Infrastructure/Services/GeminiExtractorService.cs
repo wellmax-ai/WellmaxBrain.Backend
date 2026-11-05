@@ -31,8 +31,7 @@ public class GeminiExtractorService : IAIExtractorService
             .Select(a => $"{a.RawPhrase} -> SKU: {a.MatchedSku} ({a.MatchedName})")
             .ToListAsync();
 
-        var dictionaryContext = string.Join("
-", aliases);
+        var dictionaryContext = string.Join("", aliases);
 
         // 3. System Prompt bóc tách JSON chính xác
         var systemPrompt = $@"Bạn là Wellmax Brain AI System Agent.

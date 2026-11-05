@@ -13,14 +13,19 @@ public class ChatHub : Hub
         _db = db;
     }
 
+    // Client join vào nhóm theo mã Group ID từ Database
     public async Task JoinChannel(string channelId)
     {
-        await Groups.AddToGroupAsync(Context.ConnectionId, channelId);
+        if (string.IsNullOrWhiteSpace(channelId)) return;
+        await Groups.AddToGroupAsync(Context.ConnectionId, channelId.Trim().ToLowerInvariant());
+        Console.WriteLine($"--> [SignalR] Client {Context.ConnectionId} JOIN group: {channelId}");
     }
 
     public async Task LeaveChannel(string channelId)
     {
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, channelId);
+        if (string.IsNullOrWhiteSpace(channelId)) return;
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, channelId.Trim().ToLowerInvariant());
+        Console.WriteLine($"--> [SignalR] Client {Context.ConnectionId} LEFT group: {channelId}");
     }
 
     public async Task RevokeMessage(Guid messageId, Guid senderId)
@@ -44,6 +49,11 @@ public class ChatHub : Hub
 
         await _db.SaveChangesAsync();
 
-        await Clients.Group(msg.ChannelId.ToString()).SendAsync("MessageRevoked", messageId);
+        await Clients.Group(msg.ChannelId.ToString().ToLowerInvariant()).SendAsync("MessageRevoked", messageId.ToString());
+    }
+
+    public async Task ForceLogoutUser(string userId)
+    {
+        await Clients.All.SendAsync("ForceLogoutNotification", new { userId });
     }
 }

@@ -7,7 +7,14 @@ public class User
     public string FullName { get; set; } = string.Empty;
     public string PhoneNumber { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
+    
     public string? BirthDate { get; set; }
+    public string? DateOfBirth 
+    { 
+        get => BirthDate; 
+        set => BirthDate = value; 
+    }
+
     public string? Gender { get; set; }
     public string Department { get; set; } = "Kinh Doanh & Sale";
     public string RoleGroup { get; set; } = "Nhân viên kinh doanh (Sale Rep)";
