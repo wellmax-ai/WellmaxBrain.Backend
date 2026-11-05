@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using WellmaxBrain.API.Hubs;
 using WellmaxBrain.Application.Interfaces;
 using WellmaxBrain.Domain.Entities;
@@ -31,24 +32,6 @@ public class MessagesController : ControllerBase
             .Where(m => m.ChannelId == channelId)
             .OrderBy(m => m.CreatedAtUnix)
             .Take(300)
-            .Select(m => new
-            {
-                id = m.Id.ToString(),
-                channelId = m.ChannelId.ToString(),
-                senderId = m.SenderId.ToString(),
-                senderName = m.SenderName,
-                senderAvatar = m.SenderAvatar,
-                isBot = m.IsBot,
-                isSystem = m.IsSystem,
-                text = m.Text,
-                imageUrl = m.ImageUrl,
-                fileUrl = m.FileUrl,
-                fileName = m.FileName,
-                fileSize = m.FileSize,
-                reminderJson = m.ReminderJson,
-                createdAtUnix = m.CreatedAtUnix,
-                isDeleted = m.IsDeleted
-            })
             .ToListAsync();
 
         return Ok(messages);
@@ -59,7 +42,7 @@ public class MessagesController : ControllerBase
     {
         if (!Guid.TryParse(dto.ChannelId, out var channelGuid))
         {
-            return BadRequest(new { message = "Mã ChannelId không hợp lệ (cần là Guid từ database)." });
+            return BadRequest(new { message = "Mã ChannelId không hợp lệ." });
         }
 
         Guid senderGuid;
@@ -91,29 +74,10 @@ public class MessagesController : ControllerBase
         _db.ChatMessages.Add(msg);
         await _db.SaveChangesAsync();
 
-        var broadcastPayload = new
-        {
-            id = msg.Id.ToString(),
-            channelId = msg.ChannelId.ToString(),
-            senderId = msg.SenderId.ToString(),
-            senderName = msg.SenderName,
-            senderAvatar = msg.SenderAvatar,
-            isBot = msg.IsBot,
-            isSystem = msg.IsSystem,
-            text = msg.Text,
-            imageUrl = msg.ImageUrl,
-            fileUrl = msg.FileUrl,
-            fileName = msg.FileName,
-            fileSize = msg.FileSize,
-            reminderJson = msg.ReminderJson,
-            createdAtUnix = msg.CreatedAtUnix,
-            isDeleted = msg.IsDeleted
-        };
+        // Broadcast realtime qua SignalR tới nhóm chat
+        await _hub.Clients.Group(channelGuid.ToString().ToLowerInvariant()).SendAsync("ReceiveMessage", msg);
 
-        // 1. Phát realtime qua SignalR tới đúng Group channelId từ Database
-        await _hub.Clients.Group(channelGuid.ToString()).SendAsync("ReceiveMessage", broadcastPayload);
-
-        // 2. Kích hoạt AI Agent bóc tách đơn hàng nếu có tin nhắn chứa số điện thoại
+        // Kích hoạt AI Agent bóc tách đơn hàng nếu có tin nhắn chứa số điện thoại
         if (!string.IsNullOrEmpty(geminiKey) && !msg.IsBot && !msg.IsSystem)
         {
             _ = Task.Run(async () =>
@@ -148,7 +112,7 @@ public class MessagesController : ControllerBase
                         _db.Orders.Add(order);
                         await _db.SaveChangesAsync();
 
-                        await _hub.Clients.Group(channelGuid.ToString()).SendAsync("OrderExtracted", order);
+                        await _hub.Clients.Group(channelGuid.ToString().ToLowerInvariant()).SendAsync("OrderExtracted", order);
                     }
                 }
                 catch (Exception ex)
@@ -158,7 +122,66 @@ public class MessagesController : ControllerBase
             });
         }
 
-        return Ok(broadcastPayload);
+        return Ok(msg);
+    }
+
+    [HttpPost("{id}/reaction")]
+    public async Task<IActionResult> ToggleReaction(Guid id, [FromBody] ReactionDto dto)
+    {
+        var msg = await _db.ChatMessages.FindAsync(id);
+        if (msg == null) return NotFound();
+
+        if (msg.Reactions.ContainsKey(dto.ReactionType))
+        {
+            msg.Reactions[dto.ReactionType] += 1;
+        }
+        else
+        {
+            msg.Reactions[dto.ReactionType] = 1;
+        }
+
+        await _db.SaveChangesAsync();
+
+        // Broadcast cập nhật cảm xúc
+        await _hub.Clients.Group(msg.ChannelId.ToString().ToLowerInvariant()).SendAsync("ReactionUpdated", new
+        {
+            messageId = msg.Id.ToString(),
+            channelId = msg.ChannelId.ToString(),
+            reactions = msg.Reactions
+        });
+
+        return Ok(new { messageId = msg.Id, reactions = msg.Reactions });
+    }
+
+    [HttpDelete("{id}/revoke")]
+    public async Task<IActionResult> RevokeMessage(Guid id, [FromQuery] string senderId)
+    {
+        var msg = await _db.ChatMessages.FindAsync(id);
+        if (msg == null) return NotFound(new { message = "Không tìm thấy tin nhắn." });
+
+        if (Guid.TryParse(senderId, out var sGuid) && msg.SenderId != sGuid)
+        {
+            return Forbid("Bạn chỉ có quyền thu hồi tin nhắn của chính mình.");
+        }
+
+        var elapsedHours = (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - msg.CreatedAtUnix) / (1000.0 * 60 * 60);
+        if (elapsedHours > 24)
+        {
+            return BadRequest(new { message = "Tin nhắn đã gửi quá 24 giờ, không thể thu hồi theo quy định bảo mật." });
+        }
+
+        msg.IsDeleted = true;
+        msg.Text = "Tin nhắn đã được thu hồi";
+        msg.ImageUrl = null;
+        msg.FileUrl = null;
+        msg.ReminderJson = null;
+        msg.Reactions.Clear();
+
+        await _db.SaveChangesAsync();
+
+        await _hub.Clients.Group(msg.ChannelId.ToString().ToLowerInvariant()).SendAsync("MessageRevoked", msg.Id.ToString());
+
+        return Ok(new { message = "Đã thu hồi tin nhắn thành công.", messageId = msg.Id });
     }
 }
 
@@ -176,3 +199,5 @@ public record SendMessageDto(
     bool IsBot,
     bool IsSystem
 );
+
+public record ReactionDto(string ReactionType, string? UserId);
