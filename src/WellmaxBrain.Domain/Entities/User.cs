@@ -3,6 +3,10 @@ namespace WellmaxBrain.Domain.Entities;
 public class User
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
+
+    /// <summary>
+    /// Tên đầy đủ
+    /// </summary>
     public string FullName { get; set; } = string.Empty;
     public string PhoneNumber { get; set; } = string.Empty; // SĐT dùng để đăng nhập
     public string PasswordHash { get; set; } = string.Empty;
