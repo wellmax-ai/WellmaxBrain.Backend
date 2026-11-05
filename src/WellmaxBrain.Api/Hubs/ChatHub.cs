@@ -1,15 +1,16 @@
 using Microsoft.AspNetCore.SignalR;
-using WellmaxBrain.Api.Services;
+using WellmaxBrain.Domain.Entities;
+using WellmaxBrain.Infrastructure.Persistence;
 
-namespace WellmaxBrain.Api.Hubs;
+namespace WellmaxBrain.API.Hubs;
 
 public class ChatHub : Hub
 {
-    private readonly IOrderAiService _orderAiService;
+    private readonly AppDbContext _db;
 
-    public ChatHub(IOrderAiService orderAiService)
+    public ChatHub(AppDbContext db)
     {
-        _orderAiService = orderAiService;
+        _db = db;
     }
 
     public async Task JoinChannel(string channelId)
@@ -17,26 +18,32 @@ public class ChatHub : Hub
         await Groups.AddToGroupAsync(Context.ConnectionId, channelId);
     }
 
-    public async Task SendMessage(string channelId, string senderId, string senderName, string text)
+    public async Task LeaveChannel(string channelId)
     {
-        var msgId = $"msg-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
-        var timeStr = DateTime.Now.ToString("HH:mm");
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, channelId);
+    }
 
-        // 1. Gửi tin nhắn tức thì cho tất cả client trong nhóm
-        await Clients.Group(channelId).SendAsync("ReceiveMessage", new
-        {
-            Id = msgId,
-            SenderId = senderId,
-            SenderName = senderName,
-            Text = text,
-            Timestamp = timeStr,
-            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-        });
+    public async Task RevokeMessage(Guid messageId, Guid senderId)
+    {
+        var msg = await _db.ChatMessages.FindAsync(messageId);
+        if (msg == null) return;
 
-        // 2. Kích hoạt xử lý AI nếu có @AI hoặc độ dài thông tin đơn hàng
-        if (text.Contains("@Wellmax") || text.Contains("@AI") || text.Contains("@bot") || text.Length > 20)
-        {
-            await _orderAiService.ProcessChannelMessageAsync(channelId, senderId, senderName, text);
-        }
+        if (msg.SenderId != senderId)
+            throw new HubException("Bạn chỉ có quyền thu hồi tin nhắn của chính mình.");
+
+        var elapsedHours = (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - msg.CreatedAtUnix) / (1000.0 * 60 * 60);
+        if (elapsedHours > 24)
+            throw new HubException("Tin nhắn đã gửi quá 24 giờ, không thể thu hồi.");
+
+        msg.IsDeleted = true;
+        msg.Text = "Tin nhắn đã được thu hồi";
+        msg.ImageUrl = null;
+        msg.FileUrl = null;
+        msg.ReminderJson = null;
+        msg.Reactions.Clear();
+
+        await _db.SaveChangesAsync();
+
+        await Clients.Group(msg.ChannelId.ToString()).SendAsync("MessageRevoked", messageId);
     }
 }

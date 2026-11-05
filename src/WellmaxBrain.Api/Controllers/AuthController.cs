@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using WellmaxBrain.Domain.Entities;
-using WellmaxBrain.Infrastructure.Data;
+using WellmaxBrain.Application.DTOs;
+using WellmaxBrain.Infrastructure.Persistence;
 
-namespace WellmaxBrain.Api.Controllers;
+namespace WellmaxBrain.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
@@ -16,38 +16,38 @@ public class AuthController : ControllerBase
         _db = db;
     }
 
-    public record LoginRequest(string PhoneNumber, string Password);
-
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest req)
     {
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.PhoneNumber == req.PhoneNumber);
-        if (user == null || !user.IsActive)
-        {
-            // Trả về tài khoản mẫu nếu DB chưa seed dữ liệu
-            if (req.PhoneNumber == "0988888888")
-            {
-                return Ok(new
-                {
-                    Id = "me",
-                    FullName = "Đào Hà (Admin)",
-                    PhoneNumber = "0988888888",
-                    Department = "Kỹ Thuật & AI",
-                    RoleGroup = "Quản trị viên tối cao (Super Admin)",
-                    IsAdmin = true
-                });
-            }
-            return Unauthorized(new { message = "Số điện thoại hoặc mật khẩu không chính xác." });
-        }
+        var phone = req.PhoneNumber.Trim();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.PhoneNumber == phone);
 
-        return Ok(new
-        {
-            user.Id,
-            user.FullName,
-            user.PhoneNumber,
-            user.Department,
-            user.RoleGroup,
-            user.IsAdmin
-        });
+        if (user == null)
+            return Unauthorized(new { message = "Số điện thoại không tồn tại trong hệ thống." });
+
+        if (!user.IsActive)
+            return StatusCode(403, new { message = "Tài khoản hiện đang bị khóa." });
+
+        // Kiểm tra mật khẩu (hỗ trợ hash hoặc demo 123)
+        bool isValid = BCrypt.Net.BCrypt.Verify(req.Password, user.PasswordHash) || req.Password == user.PasswordHash;
+        if (!isValid)
+            return Unauthorized(new { message = "Mật khẩu không chính xác." });
+
+        var userDto = new UserDto(user.Id, user.FullName, user.PhoneNumber, user.Department, user.RoleGroup, user.Avatar, user.IsAdmin, user.IsActive);
+        var token = "jwt-mock-token-" + user.Id;
+
+        return Ok(new LoginResponse(token, userDto));
+    }
+
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest req)
+    {
+        var user = await _db.Users.FindAsync(req.UserId);
+        if (user == null) return NotFound(new { message = "Không tìm thấy người dùng." });
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
+        await _db.SaveChangesAsync();
+
+        return Ok(new { message = "Đổi mật khẩu thành công. Đã buộc đăng xuất phiên làm việc cũ." });
     }
 }

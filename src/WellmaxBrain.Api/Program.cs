@@ -1,31 +1,34 @@
 using Microsoft.EntityFrameworkCore;
-using WellmaxBrain.Api.Hubs;
-using WellmaxBrain.Api.Services;
-using WellmaxBrain.Infrastructure.Data;
+using WellmaxBrain.API.Hubs;
+using WellmaxBrain.Application.Interfaces;
+using WellmaxBrain.Infrastructure.Persistence;
+using WellmaxBrain.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Cấu hình Database PostgreSQL
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
-    ?? "Host=localhost;Port=5432;Database=WellmaxBrainDb;Username=postgres;Password=postgres";
+// DbContext PostgreSQL
+builder.Services.AddDbContext<AppDbContext>(opts =>
+    opts.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection") 
+        ?? "Host=localhost;Database=wellmax_brain_db;Username=postgres;Password=postgres"));
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString));
+// Services & HttpClient
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<IAIExtractorService, GeminiExtractorService>();
 
-// Add CORS để frontend kết nối mượt mà
-builder.Services.AddCors(options =>
+// SignalR Realtime Service
+builder.Services.AddSignalR();
+
+// CORS Client React Vite
+builder.Services.AddCors(opts =>
 {
-    options.AddPolicy("CorsPolicy", policy =>
+    opts.AddPolicy("AllowClient", p =>
     {
-        policy.WithOrigins("http://localhost:5173", "http://localhost:3000")
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
+        p.WithOrigins("http://localhost:5173", "http://localhost:3000")
+         .AllowAnyHeader()
+         .AllowAnyMethod()
+         .AllowCredentials();
     });
 });
-
-builder.Services.AddSignalR();
-builder.Services.AddHttpClient<IOrderAiService, OrderAiService>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -39,8 +42,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseCors("CorsPolicy");
-app.UseHttpsRedirection();
+app.UseCors("AllowClient");
 app.UseAuthorization();
 
 app.MapControllers();

@@ -1,30 +1,28 @@
 namespace WellmaxBrain.Domain.Entities;
 
+public enum OrderStatus
+{
+    Ready,
+    Confirmed,
+    SyncedPOS
+}
+
 public class Order
 {
-    public string Id { get; set; } = Guid.NewGuid().ToString();
-    public string TenantId { get; set; } = "wellmax-core";
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string TenantId { get; set; } = "wellmax-default";
     public string OrderCode { get; set; } = string.Empty;
-    public string ChannelId { get; set; } = string.Empty;
-    public string CreatedByUserId { get; set; } = string.Empty;
+    public Guid ChannelId { get; set; }
+    public Channel? Channel { get; set; }
+    public Guid SourceMessageId { get; set; }
     public string CustomerName { get; set; } = string.Empty;
     public string PhoneNumber { get; set; } = string.Empty;
     public string ShippingAddress { get; set; } = string.Empty;
     public decimal TotalAmount { get; set; }
-    public string Status { get; set; } = "PendingConfirmation"; // PendingConfirmation, Confirmed, SyncedERP
-    public string? Note { get; set; }
-    public string? RawMessage { get; set; }
+    public decimal ShippingFee { get; set; } = 0;
+    public OrderStatus Status { get; set; } = OrderStatus.Ready;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public List<OrderItem> Items { get; set; } = new();
-}
+    public DateTime? AutoSyncDeadline { get; set; }
 
-public class OrderItem
-{
-    public int Id { get; set; }
-    public string OrderId { get; set; } = string.Empty;
-    public string Sku { get; set; } = string.Empty;
-    public string ProductName { get; set; } = string.Empty;
-    public int Quantity { get; set; }
-    public decimal UnitPrice { get; set; }
-    public string? Note { get; set; }
+    public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
 }
