@@ -20,7 +20,6 @@ public class ChannelsController : ControllerBase
         _hub = hub;
     }
 
-    // CHỈ TRẢ VỀ CÁC KÊNH MÀ USERID ĐÓ ĐƯỢC PHÉP THAM GIA (Hoặc là Super Admin)
     [HttpGet]
     public async Task<IActionResult> GetAllChannels([FromQuery] string? userId = null)
     {
@@ -40,11 +39,10 @@ public class ChannelsController : ControllerBase
             .Include(c => c.Members)
             .AsQueryable();
 
-        // Nếu không phải Super Admin, CHỈ lấy những nhóm mà user có trong danh sách thành viên hoặc là chủ/phó nhóm
+        // SỬA TẠI ĐÂY: Bỏ c.DeputyIds.Contains(...) để EF Core dịch được sang SQL
         if (hasUserFilter && !isSuperAdmin)
         {
-            query = query.Where(c => c.OwnerId == userGuid || 
-                                     c.DeputyIds.Contains(userGuid) || 
+            query = query.Where(c => c.OwnerId == userGuid ||
                                      c.Members.Any(m => m.UserId == userGuid));
         }
 
@@ -56,7 +54,6 @@ public class ChannelsController : ControllerBase
 
         var result = new List<object>();
 
-        // Với mỗi nhóm, lấy chính xác nội dung tin nhắn cuối cùng từ bảng ChatMessages trong PostgreSQL
         foreach (var c in channelsList)
         {
             var lastMsg = await _db.ChatMessages
@@ -123,10 +120,16 @@ public class ChannelsController : ControllerBase
         if (string.IsNullOrWhiteSpace(dto.Name))
             return BadRequest(new { message = "Tên nhóm không được để trống." });
 
-        Guid ownerGuid;
-        if (!Guid.TryParse(dto.OwnerId, out ownerGuid))
+        User? ownerUser = null;
+        if (Guid.TryParse(dto.OwnerId, out var parsedGuid))
         {
-            ownerGuid = Guid.Parse("11111111-1111-1111-1111-111111111111");
+            ownerUser = await _db.Users.FindAsync(parsedGuid);
+        }
+
+        if (ownerUser == null)
+        {
+            ownerUser = await _db.Users.FirstOrDefaultAsync(u => u.IsAdmin) 
+                     ?? await _db.Users.FirstAsync();
         }
 
         var newChannel = new Channel
@@ -134,11 +137,11 @@ public class ChannelsController : ControllerBase
             Id = Guid.NewGuid(),
             TenantId = "wellmax-default",
             Name = dto.Name.Trim(),
-            Description = dto.Description?.Trim() ?? "Nhóm bán hàng mới",
+            Description = dto.Description?.Trim() ?? "Nhóm trao đổi công việc Wellmax",
             Avatar = string.IsNullOrWhiteSpace(dto.Avatar) 
                 ? "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=120&q=80" 
                 : dto.Avatar.Trim(),
-            OwnerId = ownerGuid,
+            OwnerId = ownerUser.Id,
             DeputyIds = new List<Guid>(),
             IsPinned = false,
             PinnedAtUnix = 0,
@@ -149,20 +152,25 @@ public class ChannelsController : ControllerBase
         newChannel.Members.Add(new ChannelMember
         {
             ChannelId = newChannel.Id,
-            UserId = ownerGuid,
+            UserId = ownerUser.Id,
             JoinedAt = DateTime.UtcNow
         });
 
-        var botGuid = Guid.Parse("99999999-9999-9999-9999-999999999999");
-        newChannel.Members.Add(new ChannelMember
+        var botUser = await _db.Users.FirstOrDefaultAsync(u => u.PhoneNumber == "19008888");
+        if (botUser != null && botUser.Id != ownerUser.Id)
         {
-            ChannelId = newChannel.Id,
-            UserId = botGuid,
-            JoinedAt = DateTime.UtcNow
-        });
+            newChannel.Members.Add(new ChannelMember
+            {
+                ChannelId = newChannel.Id,
+                UserId = botUser.Id,
+                JoinedAt = DateTime.UtcNow
+            });
+        }
 
         _db.Channels.Add(newChannel);
         await _db.SaveChangesAsync();
+
+        var memberIds = newChannel.Members.Select(m => m.UserId.ToString().ToLowerInvariant()).ToList();
 
         var resPayload = new
         {
@@ -176,65 +184,150 @@ public class ChannelsController : ControllerBase
             pinnedAt = newChannel.PinnedAtUnix,
             isHidden = newChannel.IsHidden,
             isGroup = true,
-            members = newChannel.Members.Select(m => m.UserId.ToString().ToLowerInvariant()).ToList(),
+            members = memberIds,
             lastMessage = "Chưa có tin nhắn mới",
             lastTime = ""
         };
+
+        await _hub.Clients.All.SendAsync("ChannelCreatedOrUpdated", resPayload);
 
         return Ok(resPayload);
     }
 
     [HttpPost("{id}/members")]
-    public async Task<IActionResult> AddMember(Guid id, [FromBody] AddMemberRequest req)
+    public async Task<IActionResult> AddMember(string id, [FromBody] AddMemberRequest? req)
     {
-        var channel = await _db.Channels.Include(c => c.Members).FirstOrDefaultAsync(c => c.Id == id);
-        if (channel == null) return NotFound(new { message = "Không tìm thấy nhóm bán hàng." });
-
-        if (!Guid.TryParse(req.UserId, out var memberGuid))
+        try
         {
-            return BadRequest(new { message = "Mã người dùng không hợp lệ." });
+            // 1. Kiểm tra định dạng Guid của Channel ID
+            if (string.IsNullOrWhiteSpace(id) || !Guid.TryParse(id, out var channelGuid))
+            {
+                return BadRequest(new { message = "Mã nhóm không hợp lệ hoặc chưa chọn nhóm." });
+            }
+
+            // 2. Tìm kiếm Channel và nạp kèm danh sách Members
+            var channel = await _db.Channels
+                .Include(c => c.Members)
+                .FirstOrDefaultAsync(c => c.Id == channelGuid);
+
+            if (channel == null)
+            {
+                return NotFound(new { message = "Không tìm thấy nhóm trong cơ sở dữ liệu." });
+            }
+
+            // 3. Kiểm tra payload và định dạng Guid của User cần thêm
+            if (req == null || string.IsNullOrWhiteSpace(req.UserId) || !Guid.TryParse(req.UserId, out var memberGuid))
+            {
+                return BadRequest(new { message = "Mã người dùng cần thêm không hợp lệ." });
+            }
+
+            // 4. Xác minh User có tồn tại trong hệ thống (tránh lỗi Foreign Key Constraint)
+            var targetUser = await _db.Users.FindAsync(memberGuid);
+            if (targetUser == null)
+            {
+                return NotFound(new { message = "Người dùng cần thêm không tồn tại trong hệ thống." });
+            }
+
+            // 5. Kiểm tra thành viên đã có trong nhóm chưa
+            if (channel.Members.Any(m => m.UserId == memberGuid))
+            {
+                return BadRequest(new { message = "Nhân sự này đã có mặt trong nhóm." });
+            }
+
+            // 6. Kiểm tra trực tiếp bảng ChannelMembers để tránh xung đột Tracking/Concurrency
+            var existingRecord = await _db.ChannelMembers
+                .AsNoTracking()
+                .FirstOrDefaultAsync(m => m.ChannelId == channelGuid && m.UserId == memberGuid);
+
+            if (existingRecord != null)
+            {
+                return BadRequest(new { message = "Bản ghi thành viên đã tồn tại trong cơ sở dữ liệu." });
+            }
+
+            // 7. Tạo thực thể mới và lưu Database
+            var newMember = new ChannelMember
+            {
+                ChannelId = channel.Id,
+                UserId = memberGuid,
+                JoinedAt = DateTime.UtcNow
+            };
+
+            // Nếu Entity của bạn có thuộc tính TenantId, bỏ comment dòng dưới:
+            // newMember.TenantId = channel.TenantId;
+
+            _db.ChannelMembers.Add(newMember);
+            await _db.SaveChangesAsync();
+
+            // 8. Chuẩn bị danh sách thành viên cập nhật
+            var updatedMemberIds = await _db.ChannelMembers
+                .Where(m => m.ChannelId == channelGuid)
+                .Select(m => m.UserId.ToString().ToLowerInvariant())
+                .ToListAsync();
+
+            if (!updatedMemberIds.Contains(channel.OwnerId.ToString().ToLowerInvariant()))
+            {
+                updatedMemberIds.Add(channel.OwnerId.ToString().ToLowerInvariant());
+            }
+
+            var channelPayload = new
+            {
+                id = channel.Id.ToString().ToLowerInvariant(),
+                name = channel.Name,
+                avatar = channel.Avatar,
+                description = channel.Description,
+                ownerId = channel.OwnerId.ToString().ToLowerInvariant(),
+                deputyIds = channel.DeputyIds.Select(d => d.ToString().ToLowerInvariant()).ToList(),
+                isPinned = channel.IsPinned,
+                pinnedAt = channel.PinnedAtUnix,
+                isHidden = channel.IsHidden,
+                isGroup = true,
+                members = updatedMemberIds,
+                lastMessage = "Chưa có tin nhắn mới",
+                lastTime = ""
+            };
+
+            // 9. Bắn SignalR toàn hệ thống để máy người được thêm tự xuất hiện nhóm (0ms không cần F5)
+            await _hub.Clients.All.SendAsync("UserAddedToChannel", new
+            {
+                channel = channelPayload,
+                userId = memberGuid.ToString().ToLowerInvariant()
+            });
+
+            // Bắn vào phòng nhóm để những người đang mở nhóm cập nhật số lượng thành viên
+            await _hub.Clients.Group(channel.Id.ToString().ToLowerInvariant()).SendAsync("ChannelMembersUpdated", new
+            {
+                channelId = channel.Id.ToString().ToLowerInvariant(),
+                members = updatedMemberIds,
+                action = "added",
+                userId = req.UserId
+            });
+
+            return Ok(new
+            {
+                message = "Đã thêm thành viên vào nhóm thành công!",
+                channelId = channel.Id.ToString().ToLowerInvariant(),
+                members = updatedMemberIds
+            });
         }
-
-        if (channel.Members.Any(m => m.UserId == memberGuid))
+        catch (DbUpdateException dbEx)
         {
-            return BadRequest(new { message = "Nhân sự này đã có mặt trong nhóm." });
+            var innerMsg = dbEx.InnerException?.Message ?? dbEx.Message;
+            Console.WriteLine($"[AddMember DbUpdateException] {innerMsg}");
+            return StatusCode(500, new { message = $"Lỗi cơ sở dữ liệu khi thêm thành viên: {innerMsg}" });
         }
-
-        channel.Members.Add(new ChannelMember
+        catch (Exception ex)
         {
-            ChannelId = channel.Id,
-            UserId = memberGuid,
-            JoinedAt = DateTime.UtcNow
-        });
-
-        await _db.SaveChangesAsync();
-
-        var updatedMemberIds = channel.Members.Select(m => m.UserId.ToString().ToLowerInvariant()).ToList();
-        if (!updatedMemberIds.Contains(channel.OwnerId.ToString().ToLowerInvariant()))
-        {
-            updatedMemberIds.Add(channel.OwnerId.ToString().ToLowerInvariant());
+            Console.WriteLine($"[AddMember Error] {ex.Message}");
+            return StatusCode(500, new { message = $"Lỗi máy chủ nội bộ: {ex.Message}" });
         }
-
-        await _hub.Clients.Group(channel.Id.ToString().ToLowerInvariant()).SendAsync("ChannelMembersUpdated", new
-        {
-            channelId = channel.Id.ToString().ToLowerInvariant(),
-            members = updatedMemberIds,
-            action = "added",
-            userId = req.UserId
-        });
-
-        return Ok(new
-        {
-            message = "Đã thêm thành viên vào nhóm thành công!",
-            channelId = channel.Id.ToString().ToLowerInvariant(),
-            members = updatedMemberIds
-        });
     }
 
     [HttpDelete("{id}/members/{userId}")]
-    public async Task<IActionResult> RemoveMember(Guid id, string userId, [FromQuery] string requesterId)
+    public async Task<IActionResult> RemoveMember(string id, string userId, [FromQuery] string requesterId)
     {
-        var channel = await _db.Channels.Include(c => c.Members).FirstOrDefaultAsync(c => c.Id == id);
+        if (!Guid.TryParse(id, out var channelGuid)) return BadRequest(new { message = "Mã nhóm không hợp lệ." });
+
+        var channel = await _db.Channels.Include(c => c.Members).FirstOrDefaultAsync(c => c.Id == channelGuid);
         if (channel == null) return NotFound(new { message = "Không tìm thấy nhóm bán hàng." });
 
         if (!Guid.TryParse(requesterId, out var reqGuid) || channel.OwnerId != reqGuid)

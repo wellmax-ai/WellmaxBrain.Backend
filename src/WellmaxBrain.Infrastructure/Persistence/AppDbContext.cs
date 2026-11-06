@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using WellmaxBrain.Domain.Entities;
 
@@ -16,6 +16,11 @@ public class AppDbContext : DbContext
     public DbSet<LearnedAlias> LearnedAliases => Set<LearnedAlias>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+
+    // ===== BRAIN AI =====
+    public DbSet<AiProviderConfig> AiProviderConfigs => Set<AiProviderConfig>();
+    public DbSet<AiTrainingData> AiTrainingSet => Set<AiTrainingData>();
+    public DbSet<AiActivityLog> AiActivityLogs => Set<AiActivityLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -37,6 +42,14 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Product>()
             .HasIndex(p => new { p.TenantId, p.Sku })
             .IsUnique();
+
+        // Một tenant chỉ có 1 cấu hình active cho mỗi provider
+        modelBuilder.Entity<AiProviderConfig>()
+            .HasIndex(c => new { c.TenantId, c.Provider })
+            .IsUnique();
+
+        modelBuilder.Entity<AiTrainingData>()
+            .HasIndex(t => new { t.TenantId, t.IsActive });
 
         // JSON conversions for complex types
         modelBuilder.Entity<Channel>()

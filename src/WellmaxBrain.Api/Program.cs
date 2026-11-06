@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using WellmaxBrain.API.Hubs;
 using WellmaxBrain.Application.Interfaces;
@@ -15,6 +15,7 @@ builder.Services.AddDbContext<AppDbContext>(opts =>
 // Services & HttpClient
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<IAIExtractorService, GeminiExtractorService>();
+builder.Services.AddScoped<ILlmService, LlmService>();
 
 // SignalR Realtime Service
 builder.Services.AddSignalR();
